@@ -123,7 +123,8 @@ int main(int argc, char *argv[]) {
   socklen_t len = sizeof(serverAddr);
   getsockname(serverSocket, (struct sockaddr *)&serverAddr, &len);
   int port = ntohs(serverAddr.sin_port);
-  std::cout << "Server started. Listening on port " << port << '\n';
+  std::cout << "Server for chat with password " << password
+            << " started. Listening on port " << port << '\n';
 
   if (listen(serverSocket, MAX_CLIENTS) == -1) {
     std::cerr << "Error listening on socket\n";
