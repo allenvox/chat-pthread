@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#define SERVER_ACCEPT '1'
+
 int clientSocket;
 pthread_t receiveThread;
 std::string username;
@@ -19,7 +21,7 @@ void *receiveMessages(void *arg) {
       break;
     }
     buffer[bytesReceived] = '\0';
-    std::cout << buffer << std::endl;
+    std::cout << buffer << '\n';
   }
   close(clientSocket);
   pthread_exit(nullptr);
@@ -43,13 +45,15 @@ void *sendMessage(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc != 4) {
-    std::cerr << "Usage: " << argv[0] << " <server_ip> <port> <username>\n";
+  if (argc != 5) {
+    std::cerr << "Usage: " << argv[0]
+              << " <server_ip> <port> <password> <username>\n";
     return 1;
   }
   const char *serverIp = argv[1];
   int PORT = atoi(argv[2]);
-  username = argv[3];
+  std::string password = argv[3];
+  username = argv[4];
 
   clientSocket = socket(AF_INET, SOCK_STREAM, 0);
   if (clientSocket == -1) {
@@ -67,11 +71,26 @@ int main(int argc, char *argv[]) {
     std::cerr << "Error connecting to server\n";
     return 1;
   }
-  std::cout << "[server] Connected\n";
+  std::cout << "[server] Connected, checking password\n";
 
-  // Отправляем имя пользователя на сервер
+  // Send password
+  send(clientSocket, password.c_str(), password.size(), 0);
+  // Get answer (accept/deny)
+  char answer[1];
+  int received = recv(clientSocket, answer, 1, 0);
+  if (received <= 0) {
+    std::cerr << "Error receiving answer from server\n";
+    return 1;
+  }
+  if (answer[0] != SERVER_ACCEPT) {
+    std::cerr << "[server] Wrong password\n";
+    return 1;
+  }
+
+  // Send username
   send(clientSocket, username.c_str(), username.size(), 0);
 
+  // Use pthreads to receive & send messages
   pthread_create(&receiveThread, nullptr, receiveMessages, nullptr);
   pthread_t sendThread;
   pthread_create(&sendThread, nullptr, sendMessage, nullptr);

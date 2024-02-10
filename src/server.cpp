@@ -9,43 +9,79 @@
 #include <unistd.h>
 #include <vector>
 
-const int MAX_CLIENTS = 10;
-int PORT = 0; // Здесь будем хранить порт
+#define SERVER_ACCEPT '1'
+#define SERVER_DENY '0'
+#define MAX_CLIENTS 10
 
-std::vector<int> clients;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+std::string prefix = "[chat] ";
+std::string password;
+std::vector<int> clients;
 
 void *handleClient(void *arg) {
   int clientSocket = *((int *)arg);
   char buffer[1024];
 
-  // Принимаем имя пользователя
+  // Get password
   int bytesReceived = recv(clientSocket, buffer, 1024, 0);
   if (bytesReceived <= 0) {
     std::cerr << "Error receiving username\n";
     close(clientSocket);
     pthread_exit(nullptr);
   }
+  std::string received_password(buffer, bytesReceived);
 
-  std::string username(buffer, bytesReceived); // -1 to remove '\n'
-  std::cout << username << " connected\n";
+  // Check password
+  char answer[1] = {SERVER_ACCEPT};
+  if (received_password != password) {
+    answer[0] = SERVER_DENY;
+    send(clientSocket, answer, 1, 0);
+    close(clientSocket);
+    pthread_exit(nullptr);
+  }
+  send(clientSocket, answer, 1, 0);
+
+  // Get username
+  bytesReceived = recv(clientSocket, buffer, 1024, 0);
+  if (bytesReceived <= 0) {
+    std::cerr << "Error receiving username\n";
+    close(clientSocket);
+    pthread_exit(nullptr);
+  }
+  std::string username(buffer, bytesReceived);
+
+  // Send join message
+  pthread_mutex_lock(&clients_mutex);
+  std::string message = username + " connected";
+  for (int client : clients) {
+    send(client, message.c_str(), message.size(), 0);
+  }
+  pthread_mutex_unlock(&clients_mutex);
+  std::cout << prefix << message << '\n';
 
   while (true) {
     bytesReceived = recv(clientSocket, buffer, 1024, 0);
+
+    // Client disconnected
     if (bytesReceived <= 0) {
-      // Клиент отключился
       pthread_mutex_lock(&clients_mutex);
       auto it = std::find(clients.begin(), clients.end(), clientSocket);
       if (it != clients.end()) {
         clients.erase(it);
       }
+      message = username + " disconnected";
+      for (int client : clients) {
+        send(client, message.c_str(), message.size(), 0);
+      }
       pthread_mutex_unlock(&clients_mutex);
+      std::cout << prefix << message << '\n';
+
       close(clientSocket);
-      std::cout << username << " disconnected\n";
       pthread_exit(nullptr);
     }
 
-    // Отправка сообщения всем клиентам
+    // Send message to all other clients
     pthread_mutex_lock(&clients_mutex);
     for (int client : clients) {
       if (client != clientSocket) {
@@ -54,13 +90,19 @@ void *handleClient(void *arg) {
     }
     pthread_mutex_unlock(&clients_mutex);
 
-    // Отображение сообщения на сервере
+    // Show chat log on server
     buffer[bytesReceived] = '\0';
-    std::cout << "[chat] " << buffer << '\n';
+    std::cout << prefix << buffer << '\n';
   }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+  if (argc != 2) {
+    std::cerr << "Usage: " << argv[0] << " <password>\n";
+    return 1;
+  }
+  password = argv[1];
+
   int serverSocket = socket(AF_INET, SOCK_STREAM, 0);
   if (serverSocket == -1) {
     std::cerr << "Error creating socket\n";
@@ -70,8 +112,7 @@ int main() {
   struct sockaddr_in serverAddr;
   serverAddr.sin_family = AF_INET;
   serverAddr.sin_addr.s_addr = INADDR_ANY;
-  serverAddr.sin_port =
-      htons(0); // Здесь указываем 0 для автоматического выбора порта
+  serverAddr.sin_port = htons(0);
 
   if (bind(serverSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) ==
       -1) {
@@ -79,11 +120,10 @@ int main() {
     return 1;
   }
 
-  // Получаем порт, который был назначен автоматически
   socklen_t len = sizeof(serverAddr);
   getsockname(serverSocket, (struct sockaddr *)&serverAddr, &len);
-  PORT = ntohs(serverAddr.sin_port);
-  std::cout << "Server started. Listening on port " << PORT << std::endl;
+  int port = ntohs(serverAddr.sin_port);
+  std::cout << "Server started. Listening on port " << port << '\n';
 
   if (listen(serverSocket, MAX_CLIENTS) == -1) {
     std::cerr << "Error listening on socket\n";
